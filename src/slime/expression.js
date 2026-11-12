@@ -21,7 +21,7 @@ export function createExpression(world, deps) {
     sleeping: false,
     squeezeUntil: 0, happyUntil: 0, surpriseUntil: 0, strokeLevel: 0,
     nextBlink: 1.5, blinkT: -1, nextIdle: 6, lastZ: 0, lastHearts: 0,
-    mood: '', moodUntil: 0, angryUntil: 0, affectionUntil: 0, pose: '',
+    mood: '', moodUntil: 0, angryUntil: 0, affectionUntil: 0, pose: '', intensity: 1, resisting: false,
   };
 
   let yaw = 0;
@@ -40,13 +40,14 @@ export function createExpression(world, deps) {
   }
 
   function personality() {
+    if (deps.roomMode?.() === 'fire') return PERSONALITIES.calm;
     return PERSONALITIES[FLAVOR_PERSONALITIES[deps.flavorId?.() ?? 'soda']] ?? PERSONALITIES.curious;
   }
 
-  function feel(mood, duration = 3) {
+  function feel(mood, duration = 3, intensity = 1) {
     const now = performance.now() / 1000;
     touch(now, { wakeHop: false });
-    ex.mood = mood; ex.moodUntil = now + duration;
+    ex.mood = mood; ex.moodUntil = now + duration; ex.intensity = intensity;
     if (mood === 'sleep') ex.sleeping = true;
   }
 
@@ -166,7 +167,20 @@ export function createExpression(world, deps) {
       if (mood === 'happy' || mood === 'affection') tg.happy = 1;
       if (mood === 'surprise') tg.surprise = 1;
       if (mood === 'sleep') tg.sleep = 1;
+      if (!ex.pose && mood !== 'sleep') {
+        tg.happy *= ex.intensity; tg.surprise *= ex.intensity;
+        angry *= ex.intensity; affection *= ex.intensity; wink *= ex.intensity;
+      }
     } else if (angry) tg.happy = 0;
+    if ((!mood || mood === 'neutral') && deps.roomMode?.() === 'fire' && !grab.on && !ex.sleeping && !tg.surprise) {
+      tg.open = 0.78;
+      tg.happy *= 0.28;
+    }
+    if (ex.resisting) {
+      tg.happy = 0; tg.sleep = 0; tg.surprise = 0;
+      tg.squeeze = Math.min(0.4, grab.stretch * 0.23);
+      angry = 0.94; affection = 0; wink = 0;
+    }
 
     // blink, unless the eyes are busy doing something else
     if (!ex.sleeping && !ex.pose && !wink && tg.happy + tg.squeeze === 0) {

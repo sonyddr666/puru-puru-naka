@@ -16,10 +16,20 @@ export function createGrab(world, geometry, deps) {
 
   const tmpV = new THREE.Vector3();
   const tmpV2 = new THREE.Vector3();
+  let confirmed = false;
+
+  function confirm(now) {
+    if (confirmed || !deps.onGrab) return;
+    const moved = Math.hypot(raycast.pointer.x - grab.downX, raycast.pointer.y - grab.downY);
+    if (moved < 7 && now - grab.downT < 0.35) return;
+    confirmed = true;
+    deps.onGrab();
+  }
 
   /** Starts a grab at the given intersection. */
   function begin(hit, pointerId, now) {
     const g = raycast.hitVertex(hit);
+    confirmed = false;
     grab.on = true; grab.g = g; grab.id = pointerId;
     grab.downX = raycast.pointer.x; grab.downY = raycast.pointer.y; grab.downT = now;
     grab.maxStretch = 0; grab.stretch = 0;
@@ -42,6 +52,7 @@ export function createGrab(world, geometry, deps) {
 
   /** Follows the pointer; called every frame while grabbing. */
   function update(now) {
+    confirm(now);
     raycast.ray.setFromCamera(raycast.ndc, camera);
     const p = raycast.ray.ray.intersectPlane(grab.plane, tmpV);
     if (!p) return;
@@ -89,7 +100,9 @@ export function createGrab(world, geometry, deps) {
   function release(mode = 'up') {
     if (!grab.on) return;
     const now = performance.now() / 1000;
+    if (mode === 'up') confirm(now);
     grab.on = false;
+    if (confirmed) deps.onRelease?.();
     geometry.gw.fill(0);
     try { canvas.releasePointerCapture(grab.id); } catch (_) { /* already gone */ }
     canvas.style.cursor = raycast.pointer.over ? 'grab' : '';

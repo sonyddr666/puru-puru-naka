@@ -33,14 +33,26 @@ export function createCreature(scene, camera, options) {
     flavorId: () => FLAVORS[palette.index].id,
     splash: (n, spread) => splash?.(n, world.body, spread),
     onStroke: () => actions?.onStroke(),
+    roomMode: options.roomMode,
   });
   actions = createActions(world, { expression, physics, counter, sfx, fx });
   const grabCtl = createGrab(world, geometry, {
     raycast, camera, canvas, slime, sfx, physics, ex: expression.ex,
     touch: expression.touch, hearts: fx.hearts, onCount: counter.bump, onPoke: actions.onPoke,
+    onGrab: options.onGrab && (() => {
+      expression.ex.resisting = true;
+      expression.feel('angry', 1.35, 0.85);
+      world.sqv -= 0.85;
+      options.onGrab();
+    }),
+    onRelease: () => {
+      expression.ex.resisting = false;
+      expression.feel('angry', 0.8, 0.55);
+    },
   });
   fx.useSquash(() => world.sq);
   let acc = 0, unbind = () => {};
+  let voiceTilt = 0;
   const white = new THREE.Color(1, 1, 1);
   const size = (options.radius ?? 1.16) / 1.16;
   const colorKeys = Object.keys(palette.current);
@@ -76,6 +88,16 @@ export function createCreature(scene, camera, options) {
     if (now - world.pinch.last > 0.16) world.pinch.value = 0;
     expression.idle(t, now);
     actions.update(t, now);
+    const voice = options.voiceFrame?.(dt);
+    if (voice) {
+      face.speech.value.set(voice.open, voice.round);
+      const gain = reduceMotion ? 0.22 : 1;
+      const resolve = expression.ex.resisting ? 0.5 : 1;
+      world.sqTarget -= (voice.open * 0.035 + voice.pulse * 0.06) * gain * resolve;
+      if (expression.ex.resisting) world.sqTarget -= (0.025 + 0.024 * Math.sin(t * 25)) * gain;
+      const tilt = world.grab.on ? 0 : voice.open * Math.sin(t * 9) * 0.08 * gain;
+      voiceTilt += (tilt - voiceTilt) * (1 - Math.exp(-14 * dt));
+    }
     let stepped = false;
     if (expression.started && !expression.ex.pose) {
       acc += dt;
@@ -88,7 +110,7 @@ export function createCreature(scene, camera, options) {
     if (stepped) physics.writeGeometry();
     expression.updateFace(dt, t, now); expression.updateGaze(dt, t);
     slime.position.set(world.body.x, world.body.y, world.body.z);
-    slime.rotation.set(0, expression.yaw + actions.rotationY, actions.rotationZ);
+    slime.rotation.set(0, expression.yaw + actions.rotationY, actions.rotationZ + voiceTilt);
     for (const bubble of bubbles) {
       const u = bubble.userData;
       u.phase = (u.phase + dt * u.speed * (reduceMotion ? 0.3 : 1)) % 1;

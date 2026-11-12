@@ -5,14 +5,13 @@ import * as THREE from 'three';
  * (eyes, highlights) is drawn analytically in the shader instead of being
  * baked into a texture.
  *
- * The GLSL below is kept verbatim from the original single-file build.
  * `face` holds the live expression uniforms: eye = (open, happy, squeeze,
  * sleep), plus surprise and look (gaze).
  */
 export function createSlimeMaterial(palette) {
   const face = {
     eye: new THREE.Vector4(1, 0, 0, 0),   // open, happy, squeeze, sleep
-    surprise: { value: 0 },
+    surprise: { value: 0 }, speech: { value: new THREE.Vector2() },
     look: new THREE.Vector2(0, 0),
     angry: { value: 0 }, affection: { value: 0 }, wink: { value: 0 },
   };
@@ -41,6 +40,7 @@ export function createSlimeMaterial(palette) {
     sh.uniforms.uGlow = { value: palette.current.glow };
     sh.uniforms.uEye = { value: face.eye };
     sh.uniforms.uSurprise = face.surprise;
+    sh.uniforms.uSpeech = face.speech;
     sh.uniforms.uLook = { value: face.look };
     sh.uniforms.uAngry = face.angry;
     sh.uniforms.uAffection = face.affection;
@@ -57,7 +57,7 @@ export function createSlimeMaterial(palette) {
     .replace('#include <common>', `#include <common>
       varying vec3 vRest;
       uniform vec3 uInk; uniform vec3 uGlow;
-      uniform vec4 uEye; uniform float uSurprise; uniform vec2 uLook;
+      uniform vec4 uEye; uniform float uSurprise; uniform vec2 uLook; uniform vec2 uSpeech;
       uniform float uAngry; uniform float uAffection; uniform float uWink;
       uniform float uRainbow; uniform float uTime;
       float gFace; float gHi; float gBlush;
@@ -107,6 +107,10 @@ export function createSlimeMaterial(palette) {
         float mouthD = mix(smile, frown, uAngry);
         mouthD = mix(mouthD, length(mouth) - 0.028, uSurprise);
         float mouthM = fillAA(mouthD) * max(max(uEye.y, uAffection), max(max(uAngry, uSurprise), uWink));
+        float jaw = uSpeech.x;
+        float width = mix(0.081, 0.041, uSpeech.y);
+        float phoneticMouth = sdEllipse(mouth + vec2(0.0, jaw * 0.014), vec2(width, 0.006 + jaw * 0.068));
+        mouthM = mix(mouthM, fillAA(phoneticMouth), smoothstep(0.025, 0.16, jaw));
         float browL = sdSeg(qa, vec2(-0.057, 0.12), vec2(0.049, 0.08)) - 0.008;
         float browR = sdSeg(qb, vec2(-0.049, 0.08), vec2(0.057, 0.12)) - 0.008;
         float brows = fillAA(min(browL, browR)) * uAngry;

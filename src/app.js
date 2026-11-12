@@ -13,6 +13,8 @@ import { createWall } from './scene/wall.js';
 import { createDroplets } from './scene/droplets.js';
 import { createCameraRig } from './scene/camera.js';
 import { createThemes } from './scene/themes.js';
+import { createFireRoom } from './scene/fire-room.js';
+import { FIRE_MUG_ACTIONS } from './data/playground.js';
 import { createToys } from './scene/toys.js';
 import { createPurrCounter } from './ui/counter.js';
 import { createFlavorPicker } from './ui/flavors.js';
@@ -21,6 +23,7 @@ import { createPhotoMode } from './ui/photo.js';
 import { createI18n } from './i18n/index.js';
 import { createLangPicker } from './ui/langs.js';
 import { createHint } from './ui/hint.js';
+import { createChat } from './ui/chat.js';
 import { sfx } from './audio/sfx.js';
 
 /** Composition root. All creatures, toys and controls share one render loop. */
@@ -37,7 +40,7 @@ export function boot() {
   catch (error) { noGlEl.classList.add('show'); console.error(error); return; }
   const { renderer, scene, camera, DPR } = stage;
   const touches = new Map();
-  let active, main, company, droplets, photo;
+  let active, main, company, droplets, photo, chat;
   let frameNo = 0, t = 0;
   const actors = [];
   const getActors = () => actors;
@@ -46,7 +49,12 @@ export function boot() {
     splash: (n, body, spread) => droplets?.splashDrops(n, body, spread),
     isFriendActive: friend => active === friend && !photo?.active,
   };
-  main = createCreature(scene, camera, { ...creatureOptions, isActive: () => active === main && !photo?.active });
+  main = createCreature(scene, camera, {
+    ...creatureOptions, isActive: () => active === main && !photo?.active,
+    onGrab: () => chat?.grabbed(),
+    voiceFrame: dt => chat?.frame(dt),
+    roomMode: () => themes.current,
+  });
   actors.push(main);
   active = main;
   const { geometry, world, palette } = main;
@@ -61,6 +69,31 @@ export function boot() {
   });
   rig.layout(); rig.updateBounds();
   const themes = createThemes(scene, counterMesh.counter, wall, store);
+  const fire = createFireRoom(scene, geometry.FLOOR);
+  fire.mug.fit(world.bounds);
+  let pendingMugAction;
+  const drinkMug = () => themes.current === 'fire' && !photo?.active && fire.mug.start(main);
+  function express(message, withAction, duration) {
+    if (message.theme !== themes.current || photo?.active) return;
+    const reply = message.reply;
+    if (withAction && reply.action !== 'none') {
+      if (themes.current === 'fire' && FIRE_MUG_ACTIONS.includes(reply.action)) pendingMugAction = reply.action;
+      else if (!world.grab.on) main.actions.run(reply.action);
+    }
+    const emotion = reply.action === 'nap' ? 'sleep' : reply.emotion;
+    main.expression.feel(emotion, Math.max(duration, 3 + reply.intensity * 4), reply.intensity);
+  }
+  chat = createChat({
+    getContext: () => ({
+      theme: themes.current,
+      flavor: store.state.flavor,
+      scene: themes.current === 'fire' ? {
+        mug: toys.mugDragged ? 'dragging' : fire.mug.state,
+        sipped: fire.mug.sipped,
+      } : undefined,
+    }),
+    onReply: express,
+  });
 
   function select(actor) {
     if (active === actor) return;
@@ -83,7 +116,8 @@ export function boot() {
     onCreate: friend => { actors.push(friend); friend.bind(setFlavor); },
     onRemove: friend => { if (active === friend) select(main); actors.splice(1, 1); touches.clear(); },
   });
-  const toys = createToys({ scene, camera, canvas, floor: geometry.FLOOR, store, counter, sfx, getActors, getActive: () => active });
+  const toys = createToys({ scene, camera, canvas, floor: geometry.FLOOR, store, counter, sfx, getActors,
+    getActive: () => active, mug: fire.mug, canInteract: () => !photo?.active });
   // Toy picking runs first; otherwise choose the nearest creature before its input handler runs.
   canvas.addEventListener('pointerdown', event => {
     if (photo?.active || touches.size || active.world.grab.on) return;
@@ -100,7 +134,8 @@ export function boot() {
   themes.setTheme(saved.theme);
   company.setEnabled(saved.companion);
   toys.setKind(saved.toy);
-  createPlayground({ i18n, store, themes, toys, company, getActive: () => active, getActors, selectActor: select, photo, canvas });
+  createPlayground({ i18n, store, themes, toys, company, getActive: () => active, getActors,
+    selectActor: select, photo, canvas, drinkMug });
   store.subscribe(state => {
     const index = FLAVORS.findIndex(flavor => flavor.id === state.flavor);
     if (palette.index !== index) flavors.setFlavor(index, { quiet: true });
@@ -119,8 +154,13 @@ export function boot() {
     const now = performance.now() / 1000;
     rig.updateBounds();
     company.update(dt, now);
+    fire.enabled = themes.current === 'fire';
+    fire.update(t);
     for (const actor of getActors()) actor.update(dt, t, now);
     toys.update(dt, now);
+    fire.mug.update(dt);
+    if (themes.current !== 'fire' || photo.active) pendingMugAction = null;
+    if (pendingMugAction && !toys.mugDragged && fire.mug.start(main, pendingMugAction)) pendingMugAction = null;
     dropColor.copy(palette.current.atten).lerp(white, 0.3 + 0.7 * palette.material.rainbow);
     droplets.dropMat.attenuationColor.copy(dropColor);
     droplets.update(dt, world.body);
@@ -143,13 +183,20 @@ export function boot() {
       try { canvas.releasePointerCapture(id); } catch { /* Already released. */ }
     }
     touches.clear(); toys.cancelDrag(); canvas.style.cursor = '';
+    fire.mug.cancel();
+    pendingMugAction = null;
   }
   const loop = createLoop(dt => frame(Math.min(dt, 1 / 30)), { onPause: cancelInteraction });
   addEventListener('blur', cancelInteraction);
   let resizeFrame = 0;
   addEventListener('resize', () => {
     if (resizeFrame) return;
-    resizeFrame = requestAnimationFrame(() => { resizeFrame = 0; rig.layout(); });
+    resizeFrame = requestAnimationFrame(() => {
+      resizeFrame = 0;
+      rig.layout();
+      rig.updateBounds();
+      fire.mug.fit(world.bounds);
+    });
   });
   for (let i = 0; i < 7; i++) {
     const angle = Math.random() * Math.PI * 2, radius = geometry.HALFW * (1.05 + Math.random() * 0.8);
@@ -173,6 +220,7 @@ export function boot() {
         count: counter.value, flavor: store.state.flavor, theme: themes.current, companion: company.enabled,
         toy: toys.kind, objects: toys.objects.filter(object => object.visible).length,
         action: active.actions.current, mood: active.expression.ex.mood, photo: photo.active,
+        jaw: main.face.speech.value.x, resisting: main.expression.ex.resisting,
         N: geometry.N, frames: frameNo, bounds: { ...world.bounds },
       };
     },

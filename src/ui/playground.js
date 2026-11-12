@@ -2,7 +2,7 @@ import { THEMES } from '../data/themes.js';
 import { FLAVORS } from '../data/flavors.js';
 import { EMOTIONS, ACTIONS, TOYS, FLAVOR_PERSONALITIES, PERSONALITIES } from '../data/playground.js';
 
-export function createPlayground({ i18n, store, themes, toys, company, getActive, getActors, selectActor, photo, canvas }) {
+export function createPlayground({ i18n, store, themes, toys, company, getActive, getActors, selectActor, photo, canvas, drinkMug }) {
   const panel = document.querySelector('#play-panel');
   const launcher = document.querySelector('#play-open');
   const close = () => { panel.close(); canvas.focus({ preventScroll: true }); };
@@ -49,6 +49,7 @@ export function createPlayground({ i18n, store, themes, toys, company, getActive
     const success = action.id === 'hug' ? company.hug() : getActive().actions.run(action.id);
     if (success) close(); else if (action.id === 'hug') document.querySelector('#play-message').textContent = i18n.t('play.hugNeedFriend');
   }, actionWrap);
+  const drink = button({ id: 'drink', key: 'action.drink' }, () => { if (drinkMug()) close(); }, actionWrap);
   const toyWrap = document.querySelector('#toy-choices');
   for (const toy of TOYS) button(toy, () => { toys.setKind(toy.id); paint(); close(); }, toyWrap);
   const companion = document.querySelector('#play-companion');
@@ -62,7 +63,10 @@ export function createPlayground({ i18n, store, themes, toys, company, getActive
   function paint() {
     const saved = store.state, flavor = FLAVORS.find(item => item.id === saved.flavor);
     const profile = PERSONALITIES[FLAVOR_PERSONALITIES[saved.flavor]];
-    document.querySelector('#personality-note').textContent = `${i18n.pick(flavor.name)} · ${i18n.t(profile.key)}`;
+    const roomPersonality = THEMES.find(theme => theme.id === themes.current)?.personality;
+    document.querySelector('#personality-note').textContent = roomPersonality
+      ? i18n.pick(roomPersonality)
+      : `${i18n.pick(flavor.name)} · ${i18n.t(profile.key)}`;
     themeWrap.querySelectorAll('button').forEach((b, i) => { b.setAttribute('aria-pressed', THEMES[i].id === themes.current); b.querySelector('.theme-name').textContent = i18n.pick(THEMES[i].name); });
     toyWrap.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', b.dataset.id === toys.kind));
     companion.checked = company.enabled;
@@ -71,6 +75,7 @@ export function createPlayground({ i18n, store, themes, toys, company, getActive
     document.querySelector('#target-friend').setAttribute('aria-pressed', getActive() === company.friend);
     document.querySelector('#more-bubbles').hidden = toys.kind !== 'bubbles';
     actionWrap.querySelector('[data-id="hug"]').disabled = !company.enabled;
+    drink.hidden = themes.current !== 'fire';
     const hints = { sponge: 'play.spongeHint', bubbles: 'play.bubblesHint', ice: 'play.iceHint', none: 'play.objectsHint' };
     const help = document.querySelector('#toy-help'); help.dataset.i18n = hints[toys.kind];
     i18n.apply(panel);

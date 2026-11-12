@@ -4,7 +4,7 @@ import { reduceMotion } from '../core/media.js';
 import { TOYS } from '../data/playground.js';
 
 /** A bounded toy set, with real picking, dragging and contact with either slime. */
-export function createToys({ scene, camera, canvas, floor, store, counter, sfx, getActors, getActive }) {
+export function createToys({ scene, camera, canvas, floor, store, counter, sfx, getActors, getActive, mug, canInteract = () => true }) {
   let kind = 'none', objects = [], drag = null;
   const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), point = new THREE.Vector3();
   const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -floor - 0.3);
@@ -75,14 +75,19 @@ export function createToys({ scene, camera, canvas, floor, store, counter, sfx, 
     sfx.poke();
   }
   function onDown(event) {
-    if (kind === 'none' || getActive().expression.ex.pose || (event.pointerType === 'mouse' && event.button !== 0)) return;
+    if (drag || !canInteract() || (kind === 'none' && !mug?.available) || getActive().expression.ex.pose ||
+        getActive().world.grab.on || (event.pointerType === 'mouse' && event.button !== 0)) return;
     setRay(event);
-    const hit = ray.intersectObjects(objects.filter(object => object.visible), false)[0];
+    const toyHit = ray.intersectObjects(objects.filter(object => object.visible), false)[0];
+    const mugHit = mug?.available ? ray.intersectObject(mug.mesh, true)[0] : null;
+    const pickedMug = Boolean(mugHit && (!toyHit || mugHit.distance < toyHit.distance));
+    const hit = pickedMug ? mugHit : toyHit;
     const slimeHit = ray.intersectObjects(getActors().map(actor => actor.mesh), false)[0];
     if (!hit || (slimeHit && slimeHit.distance < hit.distance)) return;
     event.stopImmediatePropagation(); sfx.unlock(); getActive().expression.touch(performance.now() / 1000, { wakeHop: false });
-    if (kind === 'bubbles') { pop(hit.object, getActive(), true); return; }
-    drag = { id: event.pointerId, object: hit.object, x: event.clientX, y: event.clientY, moved: false };
+    if (!pickedMug && kind === 'bubbles') { pop(hit.object, getActive(), true); return; }
+    drag = { id: event.pointerId, object: pickedMug ? mug.mesh : hit.object,
+      mug: pickedMug, x: event.clientX, y: event.clientY, moved: false };
     try { canvas.setPointerCapture(event.pointerId); } catch {}
     canvas.style.cursor = 'grabbing';
   }
@@ -92,15 +97,20 @@ export function createToys({ scene, camera, canvas, floor, store, counter, sfx, 
     const hit = ray.ray.intersectPlane(plane, point);
     if (!hit) return;
     const bounds = getActive().world.bounds;
+    drag.moved ||= Math.hypot(event.clientX - drag.x, event.clientY - drag.y) > 6;
+    if (drag.mug) {
+      if (drag.moved && mug.available) mug.move(hit.x, hit.z, bounds);
+      return;
+    }
     const margin = kind === 'sponge' ? 0.72 : 0.5;
     drag.object.position.x = clamp(hit.x, bounds.xL + margin, bounds.xR - margin);
     drag.object.position.z = clamp(hit.z, bounds.zMin + 0.2, bounds.zMax - 0.2);
-    drag.moved ||= Math.hypot(event.clientX - drag.x, event.clientY - drag.y) > 6;
   }
   function onEnd(event) {
     if (!drag || drag.id !== event.pointerId) return;
     event.stopImmediatePropagation();
-    if (kind === 'sponge' && !drag.moved && event.type !== 'pointercancel') {
+    if (drag.mug && !drag.moved && event.type === 'pointerup') mug.start(getActors()[0]);
+    if (!drag.mug && kind === 'sponge' && !drag.moved && event.type !== 'pointercancel') {
       const actor = getActive(), body = actor.world.body;
       const dx = drag.object.position.x - body.x, dz = drag.object.position.z - body.z;
       actor.expression.touch(performance.now() / 1000, { wakeHop: false });
@@ -150,6 +160,7 @@ export function createToys({ scene, camera, canvas, floor, store, counter, sfx, 
     }
   }
   return { setKind, moreBubbles, update, cancelDrag, get kind() { return kind; }, get objects() { return objects; },
+    get mugDragged() { return drag?.mug === true; },
     dispose() { disposeObjects(); canvas.removeEventListener('pointerdown', onDown); canvas.removeEventListener('pointermove', onMove);
       canvas.removeEventListener('pointerup', onEnd); canvas.removeEventListener('pointercancel', onEnd); } };
 }

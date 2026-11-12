@@ -8,7 +8,34 @@ export function paintThemeWall(g, { id, W, H, s, X, Y }) {
     }
     rect(x - size * 0.5, y, size, size * 0.65, '#B38368');
   };
-  if (id === 'kitchen') {
+  if (id === 'fire') {
+    const glow = g.createRadialGradient(X(0), Y(2), 0, X(0), Y(2), 13 * s);
+    glow.addColorStop(0, '#F8BF63'); glow.addColorStop(0.44, '#DB8550'); glow.addColorStop(1, '#6B382F');
+    g.fillStyle = glow; g.fillRect(0, 0, W, H);
+    for (let x = X(-14); x < W; x += 1.18 * s) rect(x, 0, 0.035 * s, H, '#a64d373d');
+    rect(0, Y(0.47), W, 0.36 * s, '#7C4235');
+    rect(0, Y(0.53), W, 0.06 * s, '#F5A85E');
+    g.save();
+    g.translate(X(-2.25), Y(4.15));
+    g.rotate(-0.10);
+    rect(-0.85 * s, -1.05 * s, 1.7 * s, 2.1 * s, '#653C2D');
+    rect(-0.72 * s, -0.92 * s, 1.44 * s, 1.84 * s, '#E4A769');
+    rect(-0.56 * s, -0.76 * s, 1.12 * s, 1.52 * s, '#845A4A');
+    g.fillStyle = '#DA8D55'; g.beginPath(); g.arc(-0.1 * s, -0.28 * s, 0.21 * s, 0, 2 * Math.PI); g.fill();
+    g.fillStyle = '#4F3C35'; g.beginPath();
+    g.moveTo(-0.56 * s, 0.65 * s); g.lineTo(-0.08 * s, 0.08 * s); g.lineTo(0.19 * s, 0.44 * s);
+    g.lineTo(0.56 * s, 0.14 * s); g.lineTo(0.56 * s, 0.76 * s); g.lineTo(-0.56 * s, 0.76 * s); g.fill();
+    g.restore();
+    const smoke = g.createLinearGradient(0, Y(6.8), 0, Y(3.8));
+    smoke.addColorStop(0, '#402931'); smoke.addColorStop(1, '#74504A00');
+    g.fillStyle = smoke; g.fillRect(0, 0, W, Y(3.8));
+    for (let i = 0; i < 11; i++) {
+      g.fillStyle = i % 2 ? '#56363944' : '#4B313552';
+      g.beginPath();
+      g.ellipse(X(-12 + i * 2.36), Y(5.4 + Math.sin(i * 3) * 0.44), (2.2 + i % 3 * 0.2) * s, 0.91 * s, 0.12, 0, Math.PI * 2);
+      g.fill();
+    }
+  } else if (id === 'kitchen') {
     rect(0, 0, W, H, '#EEE7DC');
     g.strokeStyle = '#D8CEBF'; g.lineWidth = 0.025 * s;
     for (let x = X(-10); x < W; x += 2.4 * s) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke(); }

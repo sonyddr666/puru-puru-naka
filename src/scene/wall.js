@@ -85,7 +85,7 @@ export function createWall(scene) {
 
     if (theme !== 'bathroom') paintThemeWall(g, { id: theme, W, H, s, X, Y });
     // blur by repeated down/up sampling (works in every browser)
-    const steps = [0.5, 0.25, 0.125, 0.07];
+    const steps = theme === 'fire' ? [0.5, 0.24] : [0.5, 0.25, 0.125, 0.07];
     let src = big;
     for (const s of steps) {
       const c = document.createElement('canvas');
@@ -93,7 +93,7 @@ export function createWall(scene) {
       const cx = c.getContext('2d'); cx.imageSmoothingQuality = 'high';
       cx.drawImage(src, 0, 0, c.width, c.height); src = c;
     }
-    for (const s of [0.14, 0.28, 0.5]) {
+    for (const s of theme === 'fire' ? [0.5] : [0.14, 0.28, 0.5]) {
       const c = document.createElement('canvas');
       c.width = Math.round(W * s); c.height = Math.round(H * s);
       const cx = c.getContext('2d'); cx.imageSmoothingQuality = 'high';

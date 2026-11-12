@@ -15,4 +15,9 @@ export const THEMES = [
     id: 'studio', background: '#EFE6DF', base: '#F2E7DC', vein: '#BD9984', warm: '#EBDBCC', pattern: 2,
     name: { ja: 'アトリエ', 'pt-BR': 'Ateliê', en: 'Studio', es: 'Taller', zh: '工作室' },
   },
+  {
+    id: 'fire', background: '#A64E31', base: '#92543B', vein: '#713426', warm: '#F1A25B', pattern: 1,
+    name: { ja: '燃える部屋', 'pt-BR': 'Sala em chamas', en: 'Room on fire', es: 'Sala en llamas', zh: '着火的房间' },
+    personality: { ja: '動じない。皮肉は控えめ。', 'pt-BR': 'Impassível diante do caos. Humor seco.', en: 'Unbothered by chaos. Dry humor.', es: 'Impasible ante el caos. Humor seco.', zh: '面对混乱泰然自若。冷幽默。' },
+  },
 ];

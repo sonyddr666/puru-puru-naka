@@ -28,6 +28,7 @@ export const ACTIONS = [
   { id: 'nap', key: 'action.nap' },
   { id: 'hug', key: 'action.hug' },
 ];
+export const FIRE_MUG_ACTIONS = ['pick_mug', 'bring_mug', 'put_mug', 'toss_mug', 'drink'];
 export const TOYS = [
   { id: 'none', key: 'toy.none' },
   { id: 'sponge', key: 'toy.sponge' },
