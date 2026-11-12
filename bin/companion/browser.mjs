@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -52,7 +52,7 @@ function markCleanExit(profileDir) {
   } catch { /* Profile is new or not yet initialized. */ }
 }
 
-function checkSqliteCookies(profileDir) {
+function checkSqliteCookies(profileDir, fallback = { google: 'disconnected', grok: 'disconnected' }) {
   const locations = [
     path.join(profileDir, 'Default', 'Network', 'Cookies'),
     path.join(profileDir, 'Default', 'Cookies'),
@@ -83,8 +83,13 @@ function checkSqliteCookies(profileDir) {
     } finally {
       db.close();
     }
-  } catch {
-    return { google: 'disconnected', grok: 'disconnected', browserOpen: false };
+  } catch (error) {
+    const locked = error?.code === 'EBUSY' || error?.code === 'EPERM';
+    return {
+      google: fallback.google || 'disconnected',
+      grok: fallback.grok || 'disconnected',
+      browserOpen: locked,
+    };
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -265,9 +270,10 @@ function buildSendQuestionJs(question, imagePayload) {
 
 export function createPururuBrowser({ profileDir }) {
   let proc = null;
+  let loginProc = null;
   let cdp = null;
   let bootPromise = null;
-  const userTargets = new Set();
+  let lastKnownAuth = { google: 'disconnected', grok: 'disconnected' };
   const hiddenTargets = { chat: null, tts: null };
   let chatLock = Promise.resolve();
   let ttsLock = Promise.resolve();
@@ -276,10 +282,86 @@ export function createPururuBrowser({ profileDir }) {
     return proc !== null && proc.exitCode === null && cdp !== null && cdp.ws.readyState === WebSocket.OPEN;
   }
 
+  function isLoginRunning() {
+    return loginProc !== null && loginProc.exitCode === null;
+  }
+
+  async function closeAutomation() {
+    cdp?.close();
+    cdp = null;
+    hiddenTargets.chat = null;
+    hiddenTargets.tts = null;
+    if (proc && proc.exitCode === null) {
+      const current = proc;
+      proc = null;
+      try { current.kill(); } catch { /* ignore */ }
+      await new Promise(resolve => {
+        const timer = setTimeout(resolve, 1500);
+        current.once('exit', () => { clearTimeout(timer); resolve(); });
+      });
+    }
+    proc = null;
+  }
+
+  async function closeLoginWindow() {
+    const pid = loginProc?.exitCode === null ? loginProc.pid : 0;
+    const escapedProfile = profileDir.replace(/'/g, "''");
+    try {
+      execFileSync('powershell.exe', [
+        '-NoProfile',
+        '-Command',
+        `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public class PururuWin {
+  public delegate bool EnumProc(IntPtr hwnd, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc lpEnumFunc, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+}
+"@
+$procs = Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" | Where-Object { $_.CommandLine -like '*${escapedProfile}*' }
+$pids = @($procs.ProcessId)
+if (${pid} -gt 0 -and $pids -notcontains ${pid}) { $pids += ${pid} }
+if ($pids.Count -gt 0) {
+  [PururuWin]::EnumWindows({
+    param($hwnd, $lparam)
+    $owner = [uint32]0
+    [PururuWin]::GetWindowThreadProcessId($hwnd, [ref]$owner) | Out-Null
+    if ($pids -contains $owner -and [PururuWin]::IsWindowVisible($hwnd)) {
+      $cb = New-Object System.Text.StringBuilder 64
+      [PururuWin]::GetClassName($hwnd, $cb, 64) | Out-Null
+      if ($cb.ToString() -eq "Chrome_WidgetWin_1") {
+        [PururuWin]::PostMessage($hwnd, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+      }
+    }
+    return $true
+  }, [IntPtr]::Zero) | Out-Null
+}
+`,
+      ], { stdio: 'ignore', windowsHide: true, timeout: 6_000 });
+    } catch { /* ignore */ }
+
+    if (loginProc && loginProc.exitCode === null) {
+      const current = loginProc;
+      await new Promise(resolve => {
+        const timer = setTimeout(resolve, 3500);
+        current.once('exit', () => { clearTimeout(timer); resolve(); });
+      });
+    }
+    loginProc = null;
+    await sleep(350);
+  }
+
   async function ensureBrowser() {
     if (isRunning()) return cdp;
     if (bootPromise) return bootPromise;
     bootPromise = (async () => {
+      await closeLoginWindow();
       const chrome = findChrome();
       await fsp.mkdir(profileDir, { recursive: true });
       markCleanExit(profileDir);
@@ -288,6 +370,7 @@ export function createPururuBrowser({ profileDir }) {
       const child = spawn(chrome, [
         `--user-data-dir=${profileDir}`,
         '--remote-debugging-port=0',
+        '--disable-blink-features=AutomationControlled',
         '--no-first-run',
         '--no-default-browser-check',
         '--lang=pt-BR',
@@ -306,7 +389,6 @@ export function createPururuBrowser({ profileDir }) {
           proc = null;
           cdp?.close();
           cdp = null;
-          userTargets.clear();
           hiddenTargets.chat = null;
           hiddenTargets.tts = null;
         }
@@ -316,7 +398,7 @@ export function createPururuBrowser({ profileDir }) {
       let wsUrl = '';
       while (Date.now() < deadline) {
         if (child.exitCode !== null) {
-          throw new Error('O Chrome não pôde iniciar no perfil do Pururu. Feche janelas antigas e tente novamente.');
+          throw new Error('O Chrome não pôde iniciar no perfil do Pururu. Feche a janela de login e tente novamente.');
         }
         try {
           const raw = await fsp.readFile(portFile, 'utf8');
@@ -401,17 +483,26 @@ export function createPururuBrowser({ profileDir }) {
     await sleep(600);
   }
 
-  async function status() {
+  async function status({ finishLogin = false } = {}) {
+    if (finishLogin) {
+      await closeLoginWindow();
+    }
+    if (isLoginRunning()) {
+      return {
+        google: lastKnownAuth.google,
+        grok: lastKnownAuth.grok,
+        browserOpen: true,
+      };
+    }
     if (!isRunning()) {
-      return checkSqliteCookies(profileDir);
+      const res = checkSqliteCookies(profileDir, lastKnownAuth);
+      if (!res.browserOpen) {
+        lastKnownAuth = { google: res.google, grok: res.grok };
+      }
+      return res;
     }
     try {
       const { cookies } = await cdp.send('Storage.getCookies');
-      const { targetInfos } = await cdp.send('Target.getTargets');
-      const openPages = new Set((targetInfos || []).filter(t => t.type === 'page').map(t => t.targetId));
-      for (const id of [...userTargets]) {
-        if (!openPages.has(id)) userTargets.delete(id);
-      }
       const nowSec = Date.now() / 1000;
       const hasValid = (domain, names) => (cookies || []).some(c => {
         const host = String(c.domain || '').replace(/^\./, '');
@@ -419,31 +510,52 @@ export function createPururuBrowser({ profileDir }) {
         const validExp = !c.expires || c.expires <= 0 || c.expires > nowSec;
         return matchHost && names.has(c.name) && validExp;
       });
-      return {
+      lastKnownAuth = {
         google: hasValid('google.com', GOOGLE_AUTH_COOKIES) ? 'connected' : 'disconnected',
         grok: hasValid('grok.com', GROK_AUTH_COOKIES) ? 'connected' : 'disconnected',
-        browserOpen: userTargets.size > 0,
+      };
+      return {
+        ...lastKnownAuth,
+        browserOpen: false,
       };
     } catch {
-      return checkSqliteCookies(profileDir);
+      const res = checkSqliteCookies(profileDir, lastKnownAuth);
+      if (!res.browserOpen) {
+        lastKnownAuth = { google: res.google, grok: res.grok };
+      }
+      return res;
     }
   }
 
   async function connect(target = 'google') {
-    const conn = await ensureBrowser();
+    await closeAutomation();
+    const chrome = findChrome();
+    await fsp.mkdir(profileDir, { recursive: true });
+    markCleanExit(profileDir);
     const url = target === 'grok' ? GROK_URL : GOOGLE_AI_URL;
-    const { targetId } = await conn.send('Target.createTarget', {
-      url,
-      newWindow: true,
-      background: false,
-      left: 120,
-      top: 80,
-      width: 1100,
-      height: 820,
-    });
-    userTargets.add(targetId);
-    await conn.send('Target.activateTarget', { targetId }).catch(() => {});
-    return status();
+    const args = [
+      `--user-data-dir=${profileDir}`,
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-session-crashed-bubble',
+      '--hide-crash-restore-bubble',
+    ];
+    if (!isLoginRunning()) {
+      args.push('--new-window', '--window-position=120,80', '--window-size=1100,820');
+    }
+    args.push(url);
+    const child = spawn(chrome, args, { stdio: 'ignore' });
+    if (!isLoginRunning()) {
+      loginProc = child;
+      child.once('exit', () => {
+        if (loginProc === child) loginProc = null;
+      });
+    }
+    return {
+      google: lastKnownAuth.google,
+      grok: lastKnownAuth.grok,
+      browserOpen: true,
+    };
   }
 
   function speak(text, voice = 'ara') {
@@ -486,7 +598,7 @@ export function createPururuBrowser({ profileDir }) {
 
   function ask({ prompt, scene, text, theme, url, image, mime }) {
     const run = async () => {
-      const current = await status();
+      const current = await status({ finishLogin: true });
       if (current.google !== 'connected') {
         throw new Error('Conta Google não conectada. Clique em Contas → Conectar Google para entrar.');
       }

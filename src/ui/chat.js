@@ -111,17 +111,18 @@ export function createChat({ getContext, onReply }) {
     authGrokBtn.textContent = kState === 'connected' ? 'Trocar Grok' : 'Conectar Grok';
     const bothReady = gState === 'connected' && kState === 'connected';
     accountsButton.dataset.ready = String(bothReady);
+    authRefreshBtn.textContent = auth.browserOpen ? 'Já fiz login (Confirmar)' : 'Verificar acesso';
     authBrowserHint.textContent = auth.browserOpen
-      ? 'Janela de login aberta — faça login e aguarde.'
+      ? 'Faça login na janela e feche-a (ou clique em Confirmar).'
       : (bothReady ? 'Contas prontas!' : '');
     if (bothReady && authPollTimer && !auth.browserOpen) {
       clearInterval(authPollTimer);
       authPollTimer = null;
     }
   }
-  async function refreshAuth({ openIfNeeded = false } = {}) {
+  async function refreshAuth({ openIfNeeded = false, finishLogin = false } = {}) {
     try {
-      const response = await fetch(authUrl);
+      const response = await fetch(finishLogin ? `${authUrl}?verify=1` : authUrl);
       const auth = await response.json();
       applyAuthState(auth);
       if (openIfNeeded && (auth.google !== 'connected' || auth.grok !== 'connected')) {
@@ -146,10 +147,10 @@ export function createChat({ getContext, onReply }) {
       if (!response.ok) throw new Error(auth?.error || 'Não foi possível abrir o navegador.');
       applyAuthState(auth);
       authBrowserHint.textContent = target === 'grok'
-        ? 'No navegador aberto, clique em "Continue with Google" no Grok.'
-        : 'Entre na sua conta Google na janela que abriu.';
+        ? 'No navegador aberto, clique em "Continue with Google" e depois feche a janela (ou clique em Confirmar).'
+        : 'Entre na sua conta Google e depois feche a janela (ou clique em Confirmar).';
       if (!authPollTimer) {
-        authPollTimer = setInterval(() => { void refreshAuth(); }, 3000);
+        authPollTimer = setInterval(() => { void refreshAuth(); }, 2000);
       }
     } catch (error) {
       setStatus(error.message);
@@ -460,7 +461,7 @@ export function createChat({ getContext, onReply }) {
   });
   authGoogleBtn.addEventListener('click', () => { void connectAccount('google'); });
   authGrokBtn.addEventListener('click', () => { void connectAccount('grok'); });
-  authRefreshBtn.addEventListener('click', () => { void refreshAuth(); });
+  authRefreshBtn.addEventListener('click', () => { void refreshAuth({ finishLogin: true }); });
   older.addEventListener('click', () => {
     const first = messages.get(list.firstElementChild?.dataset.id);
     if (first) loadHistory(first.cursor).catch(error => setStatus(error.message));

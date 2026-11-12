@@ -230,10 +230,14 @@ export async function createCompanionApi({ dataDir }) {
         });
       }
       if (req.method === 'GET' && pathname === '/api/pururu/auth') {
-        return json(res, 200, await browser.status());
+        const finishLogin = url.searchParams.get('verify') === '1';
+        return json(res, 200, await browser.status({ finishLogin }));
       }
       if (req.method === 'POST' && pathname === '/api/pururu/auth') {
         const data = await readJson(req);
+        if (data?.target === 'verify') {
+          return json(res, 200, await browser.status({ finishLogin: true }));
+        }
         const target = data?.target === 'grok' ? 'grok' : 'google';
         const auth = await browser.connect(target);
         return json(res, 200, auth);
